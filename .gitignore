@@ -1,0 +1,9 @@
+.venv/
+.dagster_home/
+.tmp_dagster_home_*/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+.mypy_cache/
+.scrapy/
