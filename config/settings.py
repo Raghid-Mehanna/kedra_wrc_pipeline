@@ -1,9 +1,8 @@
 """
 Central configuration for the whole project.
 
-The assessment asks for no hardcoded connection strings or scraping values.
-This file reads those values from environment variables, with local defaults
-that work with docker-compose.
+This file reads connection strings, storage paths, and scraping values from
+environment variables, with local defaults that work with docker-compose.
 """
 
 from dataclasses import dataclass

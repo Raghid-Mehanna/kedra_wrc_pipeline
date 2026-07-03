@@ -28,7 +28,7 @@ RETRY_TIMES = settings.retry_times
 RETRY_HTTP_CODES = [408, 429, 500, 502, 503, 504]
 
 DEFAULT_REQUEST_HEADERS = {
-    "User-Agent": "KedraAssessmentWrcScraper/1.0 (+learning project)",
+    "User-Agent": "WrcScraper/1.0",
 }
 
 ITEM_PIPELINES = {

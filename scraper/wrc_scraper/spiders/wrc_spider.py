@@ -84,8 +84,8 @@ class WrcSpider(scrapy.Spider):
         Compatibility with newer Scrapy versions.
 
         Older Scrapy versions call start_requests(). Newer versions prefer
-        async start(). Yielding from start_requests() keeps the beginner-friendly
-        method above while still working on recent Scrapy releases.
+        async start(). Yielding from start_requests() keeps one request-building
+        implementation while still working on recent Scrapy releases.
         """
         for request in self.start_requests():
             yield request

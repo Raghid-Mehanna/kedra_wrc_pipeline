@@ -42,7 +42,7 @@ class FileDownloadPipeline:
 
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "KedraAssessmentWrcScraper/1.0"})
+        self.session.headers.update({"User-Agent": "WrcScraper/1.0"})
 
     def process_item(self, item, spider):
         url = item["document_url"]

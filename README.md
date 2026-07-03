@@ -1,9 +1,9 @@
 # Kedra WRC Scraping Pipeline
 
-This project is a beginner-friendly solution for the Kedra assessment. It uses
-Scrapy to collect Workplace Relations documents, MongoDB to store metadata, MinIO
-to store files, BeautifulSoup to transform HTML files, and Dagster to orchestrate
-the scrape and transform steps.
+This project is a data pipeline for Workplace Relations Commission decisions and
+determinations. It uses Scrapy to collect documents, MongoDB to store metadata,
+MinIO to store files, BeautifulSoup to transform HTML files, and Dagster to
+orchestrate the scrape and transform steps.
 
 ## What The Pipeline Does
 
@@ -92,7 +92,7 @@ already exists in MongoDB and the hash did not change, the file is not uploaded
 again. MongoDB also has a unique index on `identifier`, so rerunning the same
 date range updates the same metadata row instead of creating duplicates.
 
-## Beginner Explanation
+## Design Overview
 
 Think of the project as four layers:
 
@@ -102,4 +102,4 @@ Think of the project as four layers:
 4. `transform/`: reads raw files and creates cleaned processed files.
 
 The main design idea is separation of responsibility. Each file has one clear
-job, which makes the code easier to explain during the technical interview.
+job, which keeps the pipeline easier to maintain, test, and extend.

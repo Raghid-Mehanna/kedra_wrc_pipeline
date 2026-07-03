@@ -1,13 +1,13 @@
 """
 Transform landing-zone files into processed-zone files.
 
-This script follows the assessment exactly:
-- read metadata from MongoDB for a date range
-- fetch files from object storage
-- clean HTML files with BeautifulSoup
-- leave PDF/DOC/DOCX files unchanged
-- rename every output file to identifier.ext
-- write processed metadata to a new MongoDB collection
+This script:
+- reads metadata from MongoDB for a date range
+- fetches files from object storage
+- cleans HTML files with BeautifulSoup
+- leaves PDF/DOC/DOCX files unchanged
+- writes processed files as identifier.ext
+- writes processed metadata to a separate MongoDB collection
 """
 
 import argparse

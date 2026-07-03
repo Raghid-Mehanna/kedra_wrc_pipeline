@@ -1,8 +1,8 @@
 """
 MinIO helper functions.
 
-MinIO behaves like AWS S3 but runs locally in Docker. We use it as the object
-storage required by the assessment.
+MinIO behaves like AWS S3 but runs locally in Docker. The pipeline uses it as
+object storage for landing and processed files.
 """
 
 from io import BytesIO

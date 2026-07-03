@@ -65,7 +65,7 @@ def fetch_wrc_identifiers(
 ) -> Tuple[int, Set[str], Dict[str, int], Dict[str, List[str]]]:
     """Fetch every search page and collect the identifiers shown by WRC."""
     session = requests.Session()
-    session.headers.update({"User-Agent": "KedraAssessmentWrcAudit/1.0"})
+    session.headers.update({"User-Agent": "WrcCompletenessAudit/1.0"})
     retries = Retry(
         total=3,
         backoff_factor=1,

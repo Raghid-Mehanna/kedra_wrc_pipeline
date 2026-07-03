@@ -1,8 +1,8 @@
 """
 Small JSON logger.
 
-Structured logs are easier to search and parse than plain text logs. The
-assessment specifically asks for JSON logs with partition/body/count details.
+Structured logs are easier to search and parse than plain text logs, especially
+when tracking partitions, counts, failures, and retry behavior.
 """
 
 import json
