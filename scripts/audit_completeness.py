@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
-from urllib.parse import urlencode
+from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -52,6 +52,13 @@ def build_search_url(start_date: str, end_date: str, page: int) -> str:
     return f"{settings.wrc_search_url}?{urlencode(params)}"
 
 
+def canonicalize_url(url: str) -> str:
+    """Encode spaces and normalize URL paths before comparing URLs."""
+    parts = urlsplit(url)
+    path = quote(unquote(parts.path), safe="/-._~")
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
 def extract_expected_count(soup: BeautifulSoup) -> int:
     """Read text like 'Shows 1 to 10 of 628 results' from the WRC page."""
     text = soup.get_text(" ", strip=True)
@@ -59,11 +66,11 @@ def extract_expected_count(soup: BeautifulSoup) -> int:
     return int(match.group(1).replace(",", "")) if match else 0
 
 
-def fetch_wrc_identifiers(
+def fetch_wrc_records(
     start_date: str,
     end_date: str,
-) -> Tuple[int, Set[str], Dict[str, int], Dict[str, List[str]]]:
-    """Fetch every search page and collect the identifiers shown by WRC."""
+) -> Tuple[int, Dict[str, str], Dict[str, int]]:
+    """Fetch every search page and map document URLs to WRC identifiers."""
     session = requests.Session()
     session.headers.update({"User-Agent": "WrcCompletenessAudit/1.0"})
     retries = Retry(
@@ -75,9 +82,8 @@ def fetch_wrc_identifiers(
     session.mount("https://", HTTPAdapter(max_retries=retries))
 
     expected_count = 0
-    identifiers: Set[str] = set()
+    records: Dict[str, str] = {}
     duplicate_counts: Dict[str, int] = {}
-    identifier_urls: Dict[str, List[str]] = {}
     page = 1
     max_pages = 1
 
@@ -98,10 +104,9 @@ def fetch_wrc_identifiers(
             title = card.select_one("h2.title a")
             if title:
                 identifier = clean_identifier(title.get("title") or title.get_text(strip=True))
-                href = title.get("href", "")
+                href = canonicalize_url(urljoin(settings.wrc_base_url, title.get("href", "")))
                 duplicate_counts[identifier] = duplicate_counts.get(identifier, 0) + 1
-                identifier_urls.setdefault(identifier, []).append(href)
-                identifiers.add(identifier)
+                records[href] = identifier
 
         if page >= max_pages:
             break
@@ -113,11 +118,11 @@ def fetch_wrc_identifiers(
         for identifier, count in duplicate_counts.items()
         if count > 1
     }
-    return expected_count, identifiers, duplicates, identifier_urls
+    return expected_count, records, duplicates
 
 
-def fetch_mongo_identifiers(start_date: str, end_date: str) -> Dict[str, Dict[str, Any]]:
-    """Read identifiers stored in the landing metadata collection."""
+def fetch_mongo_documents(start_date: str, end_date: str) -> Dict[str, Dict[str, Any]]:
+    """Read landing metadata keyed by document URL."""
     start_partition = start_date[:7]
     end_partition = end_date[:7]
 
@@ -131,33 +136,36 @@ def fetch_mongo_identifiers(start_date: str, end_date: str) -> Dict[str, Dict[st
     finally:
         db.close()
 
-    return {clean_identifier(document["identifier"]): document for document in documents}
+    return {canonicalize_url(document["document_url"]): document for document in documents}
 
 
 def audit_completeness(start_date: str, end_date: str) -> Dict[str, Any]:
-    """Compare WRC search identifiers with MongoDB landing metadata."""
-    expected_count, website_ids, duplicate_ids, identifier_urls = fetch_wrc_identifiers(
+    """Compare WRC search document URLs with MongoDB landing metadata."""
+    expected_count, website_records, duplicate_ids = fetch_wrc_records(
         start_date,
         end_date,
     )
-    mongo_documents = fetch_mongo_identifiers(start_date, end_date)
-    mongo_ids = set(mongo_documents)
+    mongo_documents = fetch_mongo_documents(start_date, end_date)
+    website_urls = set(website_records)
+    mongo_urls = set(mongo_documents)
+    website_identifiers = {clean_identifier(identifier) for identifier in website_records.values()}
 
-    missing_in_mongo = sorted(website_ids - mongo_ids)
-    extra_in_mongo = sorted(mongo_ids - website_ids)
+    missing_in_mongo = sorted(website_urls - mongo_urls)
+    extra_in_mongo = sorted(mongo_urls - website_urls)
 
     return {
         "wrc_expected_count": expected_count,
-        "wrc_unique_identifiers": len(website_ids),
+        "wrc_unique_identifiers": len(website_identifiers),
+        "wrc_unique_documents": len(website_urls),
         "duplicate_identifiers": duplicate_ids,
-        "mongo_landing_identifiers": len(mongo_ids),
+        "mongo_landing_identifiers": len(
+            {clean_identifier(document["identifier"]) for document in mongo_documents.values()}
+        ),
+        "mongo_landing_documents": len(mongo_urls),
         "missing_in_mongo": missing_in_mongo,
-        "missing_urls": {
-            identifier: [
-                f"{settings.wrc_base_url}{url}"
-                for url in identifier_urls.get(identifier, [])
-            ]
-            for identifier in missing_in_mongo
+        "missing_identifiers": {
+            url: website_records[url]
+            for url in missing_in_mongo
         },
         "extra_in_mongo": extra_in_mongo,
     }
@@ -176,25 +184,26 @@ def main() -> None:
 
     print(f"WRC expected count: {audit['wrc_expected_count']}")
     print(f"WRC identifiers fetched: {audit['wrc_unique_identifiers']}")
+    print(f"WRC document URLs fetched: {audit['wrc_unique_documents']}")
     print(f"Duplicate identifiers on WRC pages: {len(audit['duplicate_identifiers'])}")
     for identifier, count in sorted(audit["duplicate_identifiers"].items()):
         print(f"  - {identifier}: {count} records")
     print(f"Mongo landing identifiers: {audit['mongo_landing_identifiers']}")
+    print(f"Mongo landing documents: {audit['mongo_landing_documents']}")
     print(f"Missing in Mongo: {len(audit['missing_in_mongo'])}")
-    for identifier in audit["missing_in_mongo"]:
-        print(f"  - {identifier}")
-        for url in audit["missing_urls"].get(identifier, []):
-            print(f"    {url}")
+    for url in audit["missing_in_mongo"]:
+        print(f"  - {audit['missing_identifiers'].get(url, 'Unknown identifier')}: {url}")
 
     print(f"Extra in Mongo for same months: {len(audit['extra_in_mongo'])}")
-    mongo_documents = fetch_mongo_identifiers(args.start_date, args.end_date)
-    for identifier in audit["extra_in_mongo"][:20]:
-        document = mongo_documents[identifier]
+    mongo_documents = fetch_mongo_documents(args.start_date, args.end_date)
+    for url in audit["extra_in_mongo"][:20]:
+        document = mongo_documents[url]
         print(
             "  - "
-            f"{identifier} "
+            f"{document.get('identifier', '')} "
             f"(published_date={document.get('published_date', '')}, "
-            f"partition_date={document.get('partition_date', '')})"
+            f"partition_date={document.get('partition_date', '')}, "
+            f"url={url})"
         )
 
 

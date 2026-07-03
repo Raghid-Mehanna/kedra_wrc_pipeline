@@ -7,11 +7,11 @@ orchestrate the scrape and transform steps.
 
 ## What The Pipeline Does
 
-1. Splits the requested date range into monthly partitions.
+1. Splits the requested date range into configurable 30-day partitions.
 2. Scrapes WRC search results for each partition.
 3. Extracts metadata: `identifier`, `description`, `published_date`, `document_url`, `body`, and `partition_date`.
 4. Downloads each document.
-5. Stores raw files in the MinIO landing bucket.
+5. Stores raw files in the MinIO landing bucket using `identifier.ext` filenames.
 6. Stores raw metadata in the MongoDB landing collection.
 7. Transforms landing files into processed files.
 8. Stores processed files and processed metadata separately.
@@ -88,9 +88,17 @@ ops:
 ## Idempotency
 
 The pipeline calculates a SHA256 hash for every downloaded file. If a document
-already exists in MongoDB and the hash did not change, the file is not uploaded
-again. MongoDB also has a unique index on `identifier`, so rerunning the same
-date range updates the same metadata row instead of creating duplicates.
+URL already exists in MongoDB and the hash did not change, the file is not
+uploaded again. MongoDB also has a unique index on `document_url`, so rerunning
+the same date range updates the same metadata row instead of creating
+duplicates. The `identifier` is still stored as metadata, but it is not assumed
+to be globally unique because WRC can publish different document URLs with the
+same displayed identifier.
+
+Object names normally use the cleaned WRC identifier, for example
+`ADJ-00050511.html`. If two different document URLs have the same identifier,
+the second object gets a short URL-hash suffix, for example
+`IR-SC-00002920--d7a522f7.html`, so MinIO does not overwrite either file.
 
 ## Design Overview
 

@@ -8,7 +8,9 @@ repeated housekeeping work: validate fields, download files, and store data.
 import sys
 from pathlib import Path
 import re
-from urllib.parse import urljoin, urlparse
+import hashlib
+from html import unescape
+from urllib.parse import quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
 
 import requests
 from scrapy.exceptions import DropItem
@@ -48,6 +50,7 @@ class FileDownloadPipeline:
         url = item["document_url"]
         if url.startswith("/"):
             url = urljoin(settings.wrc_base_url, url)
+        url = canonicalize_url(url)
 
         try:
             response = self.session.get(url, timeout=30)
@@ -119,16 +122,49 @@ class StoragePipeline:
 
     def process_item(self, item, spider):
         identifier = item["identifier"]
+        document_url = item["document_url"]
+        object_stem = self._object_stem(identifier)
         file_content = item["file_content"]
         file_hash = self.storage.sha256(file_content)
 
-        existing = self.db.get_by_identifier(settings.landing_collection, identifier)
+        existing = self.db.get_by_document_url(settings.landing_collection, document_url)
         if existing and existing.get("file_hash") == file_hash:
+            object_name = existing["file_path"].split("/", 1)[1]
+            file_path = existing["file_path"]
+            colliding_document = self._path_collision(file_path, document_url)
+            if colliding_document:
+                object_name = self._unique_object_name(
+                    item["partition_date"],
+                    object_stem,
+                    item["file_extension"],
+                    document_url,
+                    force_suffix=True,
+                )
+                file_hash = self.storage.upload_bytes(settings.landing_bucket, object_name, file_content)
+                file_path = f"{settings.landing_bucket}/{object_name}"
+                logger.info(
+                    "file_relocated_after_path_collision",
+                    extra={
+                        "identifier": identifier,
+                        "document_url": document_url,
+                        "file_path": file_path,
+                    },
+                )
+            else:
+                logger.info(
+                    "unchanged_file_skipped",
+                    extra={"identifier": identifier, "document_url": document_url},
+                )
+
             item["file_hash"] = file_hash
-            item["file_path"] = existing["file_path"]
-            logger.info("unchanged_file_skipped", extra={"identifier": identifier})
+            item["file_path"] = file_path
         else:
-            object_name = f"{item['partition_date']}/{identifier}.{item['file_extension']}"
+            object_name = self._unique_object_name(
+                item["partition_date"],
+                object_stem,
+                item["file_extension"],
+                document_url,
+            )
             file_hash = self.storage.upload_bytes(settings.landing_bucket, object_name, file_content)
             item["file_hash"] = file_hash
             item["file_path"] = f"{settings.landing_bucket}/{object_name}"
@@ -136,6 +172,7 @@ class StoragePipeline:
                 "file_uploaded",
                 extra={
                     "identifier": identifier,
+                    "document_url": document_url,
                     "partition_date": item["partition_date"],
                     "file_path": item["file_path"],
                 },
@@ -147,7 +184,7 @@ class StoragePipeline:
                 "identifier": identifier,
                 "description": item.get("description", ""),
                 "published_date": item.get("published_date", ""),
-                "document_url": item["document_url"],
+                "document_url": document_url,
                 "body": item["body"],
                 "partition_date": item["partition_date"],
                 "file_extension": item["file_extension"],
@@ -159,3 +196,48 @@ class StoragePipeline:
         spider.stats["records_scraped"] += 1
         del item["file_content"]
         return item
+
+    def _unique_object_name(
+        self,
+        partition_date: str,
+        object_stem: str,
+        extension: str,
+        document_url: str,
+        force_suffix: bool = False,
+    ) -> str:
+        object_name = f"{partition_date}/{object_stem}.{extension}"
+        file_path = f"{settings.landing_bucket}/{object_name}"
+        if force_suffix or self._path_collision(file_path, document_url):
+            suffix = hashlib.sha1(document_url.encode("utf-8")).hexdigest()[:8]
+            object_name = f"{partition_date}/{object_stem}--{suffix}.{extension}"
+        return object_name
+
+    def _path_collision(self, file_path: str, document_url: str):
+        existing = self.db.get_by_file_path(settings.landing_collection, file_path)
+        if existing and existing.get("document_url") != document_url:
+            return existing
+        return None
+
+    def _object_stem(self, identifier: str) -> str:
+        """
+        Build the normal object-name stem from the visible WRC identifier.
+
+        The assignment asks for files to be named identifier.ext. Duplicate
+        identifiers are handled later by _unique_object_name, which only adds a
+        short URL hash when another document already uses the same path.
+        """
+        return self._safe_name(identifier)
+
+    def _safe_name(self, value: str) -> str:
+        value = unescape(value or "").strip()
+        value = re.sub(r"\s+", "-", value)
+        value = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+        value = re.sub(r"-+", "-", value).strip("-._")
+        return value or "document"
+
+
+def canonicalize_url(url: str) -> str:
+    """Encode spaces and normalize URL paths before using them as keys."""
+    parts = urlsplit(url)
+    path = quote(unquote(parts.path), safe="/-._~")
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))

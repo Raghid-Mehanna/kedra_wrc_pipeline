@@ -6,7 +6,7 @@ This script:
 - fetches files from object storage
 - cleans HTML files with BeautifulSoup
 - leaves PDF/DOC/DOCX files unchanged
-- writes processed files as identifier.ext
+- writes processed files using the landing filename
 - writes processed metadata to a separate MongoDB collection
 """
 
@@ -14,6 +14,7 @@ import argparse
 from pathlib import Path
 import sys
 from typing import Dict
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
@@ -80,6 +81,7 @@ class HtmlCleaner:
 class Transformer:
     def __init__(self):
         self.db = MetadataStore()
+        self.db.ensure_indexes()
         self.storage = ObjectStorage()
         self.storage.ensure_buckets()
         self.cleaner = HtmlCleaner()
@@ -93,6 +95,7 @@ class Transformer:
             start_partition,
             end_partition,
         )
+        documents = self._dedupe_by_document_url(documents)
 
         stats = {"processed": 0, "skipped": 0, "failed": 0, "html_cleaned": 0, "binary_copied": 0}
         logger.info(
@@ -124,9 +127,10 @@ class Transformer:
 
     def _process_one(self, document) -> str:
         identifier = document["identifier"]
+        document_url = document["document_url"]
         source_hash = document["file_hash"]
 
-        existing = self.db.get_by_identifier(settings.processed_collection, identifier)
+        existing = self.db.get_by_document_url(settings.processed_collection, document_url)
         if existing and existing.get("source_hash") == source_hash:
             return "skipped"
 
@@ -139,14 +143,15 @@ class Transformer:
         if extension == "html":
             content = self.cleaner.clean(content.decode("utf-8", errors="replace"))
 
-        processed_object = f"{document['partition_date']}/{identifier}.{extension}"
+        processed_stem = Path(object_name).stem
+        processed_object = f"{document['partition_date']}/{processed_stem}.{extension}"
         new_hash = self.storage.upload_bytes(settings.processed_bucket, processed_object, content)
 
         processed_metadata = {
             "identifier": identifier,
             "description": document.get("description", ""),
             "published_date": document.get("published_date", ""),
-            "document_url": document.get("document_url", ""),
+            "document_url": document_url,
             "body": document.get("body", ""),
             "partition_date": document["partition_date"],
             "file_extension": extension,
@@ -157,6 +162,23 @@ class Transformer:
         }
         self.db.upsert(settings.processed_collection, processed_metadata)
         return "processed"
+
+    def _dedupe_by_document_url(self, documents):
+        """Collapse legacy rows that differ only by URL encoding."""
+        latest_by_url = {}
+        for document in documents:
+            document_url = self._canonicalize_url(document.get("document_url", ""))
+            previous = latest_by_url.get(document_url)
+            if previous is None or document.get("updated_at", "") > previous.get("updated_at", ""):
+                document = dict(document)
+                document["document_url"] = document_url
+                latest_by_url[document_url] = document
+        return list(latest_by_url.values())
+
+    def _canonicalize_url(self, url: str) -> str:
+        parts = urlsplit(url)
+        path = quote(unquote(parts.path), safe="/-._~")
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
 
     def close(self):
         self.db.close()

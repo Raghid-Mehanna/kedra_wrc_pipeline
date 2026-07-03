@@ -19,11 +19,18 @@ I would add per-domain rate limits, monitoring, and alerting.
 ## Deduplication Strategy
 
 Each downloaded file gets a SHA256 hash. Before uploading a file, the pipeline
-checks MongoDB for the same document identifier. If the identifier exists and
-the hash is unchanged, the pipeline skips the upload.
+checks MongoDB for the same document URL. If the URL exists and the hash is
+unchanged, the pipeline skips the upload.
 
-MongoDB also has a unique index on `identifier`, so rerunning the same date range
-does not create duplicate metadata records.
+MongoDB has a unique index on `document_url`, so rerunning the same date range
+does not create duplicate metadata records. The WRC `identifier` is stored and
+indexed, but not treated as the only unique key because the website can contain
+different documents with the same displayed identifier.
+
+Files are normally stored as `identifier.ext`. If two different document URLs
+would produce the same object path, the storage layer appends a short URL hash
+to the later filename. This keeps filenames readable while preventing MinIO
+path collisions.
 
 ## Landing Zone And Processed Zone
 

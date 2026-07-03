@@ -127,7 +127,7 @@ class WrcSpider(scrapy.Spider):
         # The current WRC HTML wraps each search result in li.each-item.
         # Reading the card as a unit avoids accidentally treating the
         # "View Page" button text as the identifier.
-        seen = set()
+        seen_urls = set()
         for card in response.css("li.each-item"):
             title_link = card.css("h2.title a")
             href = title_link.attrib.get("href") if title_link else None
@@ -135,9 +135,10 @@ class WrcSpider(scrapy.Spider):
                 title_link.attrib.get("title") if title_link else ""
             ) or self._clean_text(title_link.css("::text").get() if title_link else "")
 
-            if not href or not identifier or identifier in seen:
+            document_url = response.urljoin(href) if href else ""
+            if not document_url or not identifier or document_url in seen_urls:
                 continue
-            seen.add(identifier)
+            seen_urls.add(document_url)
 
             description = self._clean_text(card.css(".description::text").get())
             published_date = self._clean_text(card.css(".date::text").get())
@@ -146,7 +147,7 @@ class WrcSpider(scrapy.Spider):
             item["identifier"] = identifier
             item["description"] = description
             item["published_date"] = published_date
-            item["document_url"] = response.urljoin(href)
+            item["document_url"] = document_url
             item["body"] = self._detect_body(identifier)
             item["partition_date"] = partition_date
             yield item

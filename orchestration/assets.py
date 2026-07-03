@@ -14,10 +14,8 @@ from dagster import AssetExecutionContext, Config, MaterializeResult, MetadataVa
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
-from config import settings
 from scripts.audit_completeness import audit_completeness
 from transform.transformer import run_transformation
-from utils.database import MetadataStore
 
 
 class DateRangeConfig(Config):
@@ -46,16 +44,6 @@ def scraped_documents(context: AssetExecutionContext, config: DateRangeConfig) -
         context.log.error(result.stderr)
         raise RuntimeError("Scrapy failed")
 
-    db = MetadataStore()
-    try:
-        count = db.count_by_partition_range(
-            settings.landing_collection,
-            config.start_date[:7],
-            config.end_date[:7],
-        )
-    finally:
-        db.close()
-
     audit = audit_completeness(config.start_date, config.end_date)
     duplicate_lines = [
         f"{identifier}: {duplicate_count} records"
@@ -64,18 +52,23 @@ def scraped_documents(context: AssetExecutionContext, config: DateRangeConfig) -
 
     return MaterializeResult(
         metadata={
-            "landing_documents": MetadataValue.int(count),
+            "landing_documents": MetadataValue.int(audit["mongo_landing_documents"]),
             "wrc_expected_result_cards": MetadataValue.int(audit["wrc_expected_count"]),
             "wrc_unique_identifiers": MetadataValue.int(audit["wrc_unique_identifiers"]),
+            "wrc_unique_documents": MetadataValue.int(audit["wrc_unique_documents"]),
             "wrc_duplicate_identifier_count": MetadataValue.int(
                 len(audit["duplicate_identifiers"])
             ),
             "wrc_duplicate_identifiers": MetadataValue.md(
                 "\n".join(f"- {line}" for line in duplicate_lines) or "None"
             ),
+            "mongo_landing_documents": MetadataValue.int(audit["mongo_landing_documents"]),
             "missing_in_mongo_count": MetadataValue.int(len(audit["missing_in_mongo"])),
             "missing_in_mongo": MetadataValue.md(
-                "\n".join(f"- {identifier}" for identifier in audit["missing_in_mongo"])
+                "\n".join(
+                    f"- {audit['missing_identifiers'].get(url, 'Unknown identifier')}: {url}"
+                    for url in audit["missing_in_mongo"]
+                )
                 or "None"
             ),
             "extra_in_mongo_count": MetadataValue.int(len(audit["extra_in_mongo"])),
